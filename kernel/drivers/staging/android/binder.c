@@ -572,7 +572,7 @@ static struct binder_buffer *binder_buffer_lookup(struct binder_proc *proc,
 	}
 	return NULL;
 }
-
+//binder_update_page_range 主要完成工作：分配物理空间，将物理空间映射到内核空间，将物理空间映射到进程空间
 static int binder_update_page_range(struct binder_proc *proc, int allocate,
 				    void *start, void *end,
 				    struct vm_area_struct *vma)
@@ -641,7 +641,7 @@ static int binder_update_page_range(struct binder_proc *proc, int allocate,
 		//  用户空间地址 = 内核空间地址 + 偏移量
 		user_page_addr =
 			(uintptr_t)page_addr + proc->user_buffer_offset;
-		//物理空间映射到虚拟进程空间
+		//物理空间映射到虚拟用户空间
 		ret = vm_insert_page(vma, user_page_addr, page[0]);
 		if (ret) {
 			pr_err("%d: binder_alloc_buf failed to map page at %lx in userspace\n",
@@ -678,7 +678,7 @@ err_no_vma:
 	}
 	return -ENOMEM;
 }
-
+//binder_alloc_buf是内存分配函数
 static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
 					      size_t data_size,
 					      size_t offsets_size,
@@ -696,7 +696,7 @@ static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
 	if (proc->vma == NULL) {
 		pr_err("%d: binder_alloc_buf, no vma\n",
 		       proc->pid);
-		return NULL;
+		return NULL;//虚拟地址空间为空，直接返回
 	}
 
 	data_offsets_size = ALIGN(data_size, sizeof(void *)) +
@@ -711,17 +711,17 @@ static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
 	if (size < data_offsets_size || size < extra_buffers_size) {
 		binder_user_error("%d: got transaction with invalid extra_buffers_size %zd\n",
 				  proc->pid, extra_buffers_size);
-		return NULL;
+		return NULL;//非法的size
 	}
 	if (is_async &&
 	    proc->free_async_space < size + sizeof(struct binder_buffer)) {
 		binder_debug(BINDER_DEBUG_BUFFER_ALLOC,
 			     "%d: binder_alloc_buf size %zd failed, no async space left\n",
 			      proc->pid, size);
-		return NULL;
+		return NULL;// 剩余可用的异步空间，小于所需的大小
 	}
 
-	while (n) {
+	while (n) {//从binder_buffer的红黑树中查找大小相等的buffer块
 		buffer = rb_entry(n, struct binder_buffer, rb_node);
 		BUG_ON(!buffer->free);
 		buffer_size = binder_buffer_size(proc, buffer);
@@ -739,7 +739,7 @@ static struct binder_buffer *binder_alloc_buf(struct binder_proc *proc,
 	if (best_fit == NULL) {
 		pr_err("%d: binder_alloc_buf size %zd failed, no address space\n",
 			proc->pid, size);
-		return NULL;
+		return NULL;//内存分配失败，地址空间为空
 	}
 	if (n == NULL) {
 		buffer = rb_entry(best_fit, struct binder_buffer, rb_node);
@@ -1831,23 +1831,24 @@ static int binder_fixup_parent(struct binder_transaction *t,
 
 	return 0;
 }
-
+//路由过程：handle -> ref -> target_node -> target_proc
 static void binder_transaction(struct binder_proc *proc,
 			       struct binder_thread *thread,
 			       struct binder_transaction_data *tr, int reply,
 			       binder_size_t extra_buffers_size)
 {
 	int ret;
+	//分配两个结构体内存 binder_transaction binder_work
 	struct binder_transaction *t;
 	struct binder_work *tcomplete;
 	binder_size_t *offp, *off_end, *off_start;
 	binder_size_t off_min;
 	u8 *sg_bufp, *sg_buf_end;
-	struct binder_proc *target_proc; // 目标 target_proc
-	struct binder_thread *target_thread = NULL;
-	struct binder_node *target_node = NULL;// 目标 target_node 
-	struct list_head *target_list;
-	wait_queue_head_t *target_wait;
+	struct binder_proc *target_proc; // 目标进程 target_proc
+	struct binder_thread *target_thread = NULL;//目标线程
+	struct binder_node *target_node = NULL;// 目标binder节点 target_node 
+	struct list_head *target_list; //目标TODO队列
+	wait_queue_head_t *target_wait;//目标等待队列
 	struct binder_transaction *in_reply_to = NULL;
 	struct binder_transaction_log_entry *e;
 	uint32_t return_error;
@@ -2016,7 +2017,7 @@ static void binder_transaction(struct binder_proc *proc,
 	trace_binder_transaction(reply, t, target_node);
 
 	// 往 target_proc 中按需开辟内存，物理空间和内核空间映射同一块物理内存(为完成本条 transaction申请内存，从 binder_mmap开辟的空间中申请内存)
-	t->buffer = binder_alloc_buf(target_proc, tr->data_size,
+	t->buffer = binder_alloc_buf(target_proc, tr->data_size,//-->[binder_alloc_buf]
 		tr->offsets_size, extra_buffers_size,
 		!reply && (t->flags & TF_ONE_WAY));
 	if (t->buffer == NULL) {
@@ -2209,10 +2210,10 @@ static void binder_transaction(struct binder_proc *proc,
 		} else
 			target_node->has_async_transaction = 1;
 	}
-	//TODO-->重要-> 往目标进程中添加一个 BINDER_WORK_TRANSACTION
+	//TODO-->重要-> 往目标进程target_list中添加一个 BINDER_WORK_TRANSACTION
 	t->work.type = BINDER_WORK_TRANSACTION;// 设置 t的类型为 BINDER_WORK_TRANSACTION
 	list_add_tail(&t->work.entry, target_list);// 将 t加入目标的处理队列中
-	//TODO-->重要-> 自己进程中添加一个 BINDER_WORK_TRANSACTION_COMPLETE
+	//TODO-->重要-> 自己进程(当前线程)的todo队列中添加一个 BINDER_WORK_TRANSACTION_COMPLETE
 	tcomplete->type = BINDER_WORK_TRANSACTION_COMPLETE;//设置 binder_work的类型为 BINDER_WORK_TRANSACTION_COMPLETE
 	list_add_tail(&tcomplete->entry, &thread->todo);// 当前线程有一个未完成的操作
 	if (target_wait)
@@ -2272,7 +2273,7 @@ static int binder_thread_write(struct binder_proc *proc,
 	void __user *end = buffer + size;
 
 	while (ptr < end && thread->return_error == BR_OK) {
-		if (get_user(cmd, (uint32_t __user *)ptr))// 获取到 cmd 命令 BC_TRANSACTION
+		if (get_user(cmd, (uint32_t __user *)ptr))// 获取到 cmd 命令 BC_TRANSACTION--Binder协议(BC码)
 			return -EFAULT;
 		ptr += sizeof(uint32_t);
 		trace_binder_command(cmd);
@@ -2452,14 +2453,14 @@ static int binder_thread_write(struct binder_proc *proc,
 					   cmd == BC_REPLY_SG, tr.buffers_size);
 			break;
 		}
-		case BC_TRANSACTION:
+		case BC_TRANSACTION://对于请求码为BC_TRANSACTION或BC_REPLY时，会执行binder_transaction()方法，这是最为频繁的操作
 		case BC_REPLY: {
 			struct binder_transaction_data tr;
 
-			if (copy_from_user(&tr, ptr, sizeof(tr)))// 把数据从用户空间拷贝到内核空间 binder_transaction_data 
+			if (copy_from_user(&tr, ptr, sizeof(tr)))// 把数据从用户空间tr拷贝到内核空间 binder_transaction_data 
 				return -EFAULT;
 			ptr += sizeof(tr);
-			binder_transaction(proc, thread, &tr,//TODO-->binder_transaction
+			binder_transaction(proc, thread, &tr,//TODO-->[binder_transaction]
 					   cmd == BC_REPLY, 0);
 			break;
 		}
@@ -2713,7 +2714,7 @@ retry:
 	trace_binder_wait_for_work(wait_for_proc_work,
 				   !!thread->transaction_stack,
 				   !list_empty(&thread->todo));
-	if (wait_for_proc_work) {
+	if (wait_for_proc_work) {//根据wait_for_proc_work来决定->wait在当前线程还是进程的等待队列
 		if (!(thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
 					BINDER_LOOPER_STATE_ENTERED))) {
 			binder_user_error("%d:%d ERROR: Thread waiting for process work before calling BC_REGISTER_LOOPER or BC_ENTER_LOOPER (state %x)\n",
@@ -2762,7 +2763,7 @@ retry:
 			/* no data added */
 			if (ptr - buffer == 4 &&
 			    !(thread->looper & BINDER_LOOPER_STATE_NEED_RETURN))
-				goto retry;
+				goto retry;//当&thread->todo和&proc->todo都为空时，goto到retry标志处，否则往下执行：
 			break;
 		}
 
@@ -2975,6 +2976,8 @@ retry:
 done:
 
 	*consumed = ptr - buffer;
+	//当满足请求线程加已准备线程数等于0，已启动线程数小于最大线程数(15)，
+    //且looper状态为已注册或已进入时创建新的线程。
 	if (proc->requested_threads + proc->ready_threads == 0 &&
 	    proc->requested_threads_started < proc->max_threads &&
 	    (thread->looper & (BINDER_LOOPER_STATE_REGISTERED |
@@ -2986,7 +2989,8 @@ done:
 			     proc->pid, thread->pid);
 		if (put_user(BR_SPAWN_LOOPER, (uint32_t __user *)buffer))
 			return -EFAULT;
-		binder_stat_br(proc, thread, BR_SPAWN_LOOPER);
+		binder_stat_br(proc, thread, BR_SPAWN_LOOPER);// 生成BR_SPAWN_LOOPER命令，用于创建新的线程
+		//用户空间IPCThreadState类中的IPCThreadState::waitForResponse()和IPCThreadState::executeCommand()两个方法共同处理Binder协议中的18个响应码
 	}
 	return 0;
 }
@@ -3040,7 +3044,7 @@ static void binder_release_work(struct list_head *list)
 	}
 
 }
-
+//从binder_proc中查找binder_thread,如果当前线程已经加入到proc的线程队列则直接返回，如果不存在则创建binder_thread，并将当前线程添加到当前的proc
 static struct binder_thread *binder_get_thread(struct binder_proc *proc)
 {
 	struct binder_thread *thread = NULL;
@@ -3260,6 +3264,7 @@ out:
 }
 
 /**
+ * binder_ioctl()函数负责在两个进程间收发IPC数据和IPC reply数据。
  * ioctl 命令有 BINDER_WRITE_READ （binder 读写交互）、
  * BINDER_SET_CONTEXT_MGR（servicemanager进程成为上下文管理者）、
  * BINDER_SET_MAX_THREADS（设置最大线程数）、BINDER_VERSION（获取 binder 版本）。
@@ -3269,7 +3274,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	int ret;
 	struct binder_proc *proc = filp->private_data; // 从 filp 获取 binder_proc 
-	struct binder_thread *thread;
+	struct binder_thread *thread;// binder线程
 	unsigned int size = _IOC_SIZE(cmd);
 	void __user *ubuf = (void __user *)arg;
 
@@ -3284,7 +3289,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		goto err_unlocked;
 
 	binder_lock(__func__);
-	thread = binder_get_thread(proc); // 获取 binder_thread 
+	thread = binder_get_thread(proc); // 获取 binder_thread -->[binder_get_thread]
 	if (thread == NULL) {
 		ret = -ENOMEM;
 		goto err;
@@ -3292,7 +3297,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 	switch (cmd) {
 	case BINDER_WRITE_READ://读写操作
-		ret = binder_ioctl_write_read(filp, cmd, arg, thread);//TODO-->
+		ret = binder_ioctl_write_read(filp, cmd, arg, thread);//TODO-->[binder_ioctl_write_read]
 		if (ret)
 			goto err;
 		break;
@@ -3389,6 +3394,9 @@ binder_mmap
 4. 存分别映射到    用户空间的虚拟内存和内核的虚拟内存
 
 binder_mmap 的主要作用就是开辟一块连续的内核空间，并且开辟一个物理页的地址空间，同时映射到用户空间和内核空间。
+实现了用户空间的Buffer和内核空间的Buffer同步操作的功能
+binder_mmap通过加锁，保证一次只有一个进程分配内存，保证多进程间的并发访问
+user_buffer_offset是虚拟进程地址与虚拟内核地址的差值(该值为负数)。也就是说同一物理地址，当内核地址为kernel_addr，则进程地址为proc_addr = kernel_addr + user_buffer_offset。
 */
 static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 {
@@ -3455,7 +3463,7 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	vma->vm_ops = &binder_vm_ops;
 	vma->vm_private_data = proc;
 	//分配物理页面，同时映射到内核空间和进程空间，先分配1个物理页
-	if (binder_update_page_range(proc, 1, proc->buffer, proc->buffer + PAGE_SIZE, vma)) {
+	if (binder_update_page_range(proc, 1, proc->buffer, proc->buffer + PAGE_SIZE, vma)) {//-->binder_update_page_range
 		ret = -ENOMEM;
 		failure_string = "alloc small buf";
 		goto err_alloc_small_buf_failed;
@@ -3475,7 +3483,7 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 		 proc->pid, vma->vm_start, vma->vm_end, proc->buffer);*/
 	return 0;
 
-err_alloc_small_buf_failed:
+err_alloc_small_buf_failed:// 错误flags跳转处，free释放内存之类的操作
 	kfree(proc->pages);
 	proc->pages = NULL;
 err_alloc_pages_failed:
@@ -3514,7 +3522,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 		return -ENOMEM;
 	get_task_struct(current);
 	proc->tsk = current;// 将当前线程的 task 保存到 binder 进程的 tsk
-	INIT_LIST_HEAD(&proc->todo);//todo 目标任务
+	INIT_LIST_HEAD(&proc->todo);//todo 目标任务->初始化todo列表
 	init_waitqueue_head(&proc->wait); // 初始化 wait 队列
 	proc->default_priority = task_nice(current);// 将当前进程的 nice 值转换为进程优先级
 	binder_dev = container_of(filp->private_data, struct binder_device,
