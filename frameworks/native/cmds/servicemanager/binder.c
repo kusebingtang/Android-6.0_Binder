@@ -88,14 +88,22 @@ const char *cmd_name(uint32_t cmd)
 
 struct binder_state
 {
-    int fd;
-    void *mapped;
-    size_t mapsize;
+    int fd;         // dev/binder的文件描述符
+    void *mapped;   //指向mmap的内存地址
+    size_t mapsize; //分配的内存大小，默认为128KB
 };
 
+/**
+ * 先调用open()打开binder设备，open()方法经过系统调用，进入Binder驱动，然后调用方法binder_open()，
+ * 该方法会在Binder驱动层创建一个binder_proc对象，再将binder_proc对象赋值给fd->private_data，
+ * 同时放入全局链表binder_procs。再通过ioctl()检验当前binder版本与Binder驱动层的版本是否一致。
+ * 
+ * 调用mmap()进行内存映射，同理mmap()方法经过系统调用，对应于Binder驱动层的binder_mmap()方法，
+ * 该方法会在Binder驱动层创建Binder_buffer对象，并放入当前binder_proc的proc->buffers链表。
+*/
 struct binder_state *binder_open(size_t mapsize)
 {
-    struct binder_state *bs;
+    struct binder_state *bs;//-->[binder_state]
     struct binder_version vers;
 
     bs = malloc(sizeof(*bs));
@@ -104,11 +112,11 @@ struct binder_state *binder_open(size_t mapsize)
         return NULL;
     }
 
-    bs->fd = open("/dev/binder", O_RDWR); // 打开 binder 驱动
+    bs->fd = open("/dev/binder", O_RDWR); //通过系统调用陷入内核，打开Binder设备驱动
     if (bs->fd < 0) {
         fprintf(stderr,"binder: cannot open device (%s)\n",
                 strerror(errno));
-        goto fail_open;
+        goto fail_open;// 无法打开binder设备
     }
     // 获取驱动版本，并判断版本是否一致
     if ((ioctl(bs->fd, BINDER_VERSION, &vers) == -1) ||
@@ -116,15 +124,16 @@ struct binder_state *binder_open(size_t mapsize)
         fprintf(stderr,
                 "binder: kernel driver version (%d) differs from user space version (%d)\n",
                 vers.protocol_version, BINDER_CURRENT_PROTOCOL_VERSION);
-        goto fail_open;
+        goto fail_open;//内核空间与用户空间的binder不是同一版本
     }
 
     bs->mapsize = mapsize; //  128k 字节大小的内存空间
+    //通过系统调用，mmap内存映射，mmap必须是page的整数倍
     bs->mapped = mmap(NULL, mapsize, PROT_READ, MAP_PRIVATE, bs->fd, 0); // binder_mmap 内存映射
     if (bs->mapped == MAP_FAILED) {
         fprintf(stderr,"binder: cannot map device (%s)\n",
                 strerror(errno));
-        goto fail_map;
+        goto fail_map; // binder设备内存无法映射
     }
 
     return bs;
@@ -143,10 +152,11 @@ void binder_close(struct binder_state *bs)
     free(bs);
 }
 
-// ServiceManager 进程：让 ServiceManager 进程成为管理者
+// ServiceManager 进程：让 ServiceManager 进程成为管理者,整个系统中只有一个这样的管理者。 
 int binder_become_context_manager(struct binder_state *bs)
 {
-    return ioctl(bs->fd, BINDER_SET_CONTEXT_MGR, 0);
+    //通过ioctl，传递BINDER_SET_CONTEXT_MGR指令-->[binder_ioctl]
+    return ioctl(bs->fd, BINDER_SET_CONTEXT_MGR, 0);//对应于Binder驱动层的binder_ioctl()方法.
 }
 
 int binder_write(struct binder_state *bs, void *data, size_t len)
@@ -156,10 +166,11 @@ int binder_write(struct binder_state *bs, void *data, size_t len)
 
     bwr.write_size = len; // 代表写入数据大小，大小是 len
     bwr.write_consumed = 0;
-    bwr.write_buffer = (uintptr_t) data; // 写入命令 BC_ENTER_LOOPER
+    bwr.write_buffer = (uintptr_t) data; // 写入命令 BC_ENTER_LOOPER(此处data为BC_ENTER_LOOPER)
     bwr.read_size = 0; // read_size = 0，表示不读取数据
     bwr.read_consumed = 0;
     bwr.read_buffer = 0;
+    //-->[binder_ioctl]
     res = ioctl(bs->fd, BINDER_WRITE_READ, &bwr);// 把 binder_write_read 写入 binder 驱动
     if (res < 0) {
         fprintf(stderr,"binder_write: ioctl failed (%s)\n",
@@ -241,10 +252,13 @@ int binder_parse(struct binder_state *bs, struct binder_io *bio,
                 struct binder_io msg;
                 struct binder_io reply;//回写数据
                 int res;
-
+                //-->[bio_init]
                 bio_init(&reply, rdata, sizeof(rdata), 4); // 创建回复的 reply-->reply初始化
+                //-->[bio_init_from_txn]
                 bio_init_from_txn(&msg, txn); // 从 txn 解析出 binder_io 信息
+                //-->[service_manager|svcmgr_handler]
                 res = func(bs, txn, &msg, &reply);// 调用解析回调函数 svcmgr_handler 
+                //-->[binder_send_reply]
                 binder_send_reply(bs, &reply, txn->data.ptr.buffer, res);  // 向binder驱动发送一个回复/将reply发给binder驱动
             }
             ptr += sizeof(*txn);
@@ -270,6 +284,7 @@ int binder_parse(struct binder_state *bs, struct binder_io *bio,
         case BR_DEAD_BINDER: {
             struct binder_death *death = (struct binder_death *)(uintptr_t) *(binder_uintptr_t *)ptr;
             ptr += sizeof(binder_uintptr_t);
+            //-->[ servicemanager/binder.c|binder_link_to_death]
             death->func(bs, death->ptr);// binder 死亡消息 
             break;
         }
@@ -314,7 +329,7 @@ void binder_link_to_death(struct binder_state *bs, uint32_t target, struct binde
     data.cmd = BC_REQUEST_DEATH_NOTIFICATION;
     data.payload.handle = target;
     data.payload.cookie = (uintptr_t) death;
-    binder_write(bs, &data, sizeof(data));
+    binder_write(bs, &data, sizeof(data));//-->[binder_write]-->[binder_ioctl_write_read]
 }
 
 int binder_call(struct binder_state *bs,
@@ -371,7 +386,7 @@ fail:
     return -1;
 }
 
-void binder_loop(struct binder_state *bs, binder_handler func)
+void binder_loop(struct binder_state *bs, binder_handler func)//由main()方法传递过来的参数func指向svcmgr_handler。
 {
     int res;
     struct binder_write_read bwr;
@@ -382,6 +397,7 @@ void binder_loop(struct binder_state *bs, binder_handler func)
     bwr.write_buffer = 0;
     // 将 BC_ENTER_LOOPER 写入驱动，告诉驱动当前进程进入循环
     readbuf[0] = BC_ENTER_LOOPER;
+    //将BC_ENTER_LOOPER命令发送给binder驱动，让Service Manager进入循环-->[binder_write]
     binder_write(bs, readbuf, sizeof(uint32_t));
 
     // ServiceManager 进程：binder 线程进入循环等待，不断的读写 binder 内容
@@ -391,13 +407,13 @@ void binder_loop(struct binder_state *bs, binder_handler func)
          // 不断的循环等待读取 binder 驱动的数据
         bwr.read_buffer = (uintptr_t) readbuf;
 
-        res = ioctl(bs->fd, BINDER_WRITE_READ, &bwr);
+        res = ioctl(bs->fd, BINDER_WRITE_READ, &bwr);//进入循环，不断地binder读写过程
 
         if (res < 0) {
             ALOGE("binder_loop: ioctl failed (%s)\n", strerror(errno));
             break;
         }
-        // 解析远程进程的 binder 驱动信息-->对 getService请求进行解析
+        // 解析远程进程的 binder 驱动信息-->对 getService请求进行解析-->[binder_parse]
         res = binder_parse(bs, 0, (uintptr_t) readbuf, bwr.read_consumed, func);
         if (res == 0) {
             ALOGE("binder_loop: unexpected reply?!\n");
@@ -409,7 +425,7 @@ void binder_loop(struct binder_state *bs, binder_handler func)
         }
     }
 }
-
+//将readbuf的数据赋给bio对象的data
 void bio_init_from_txn(struct binder_io *bio, struct binder_transaction_data *txn)
 {
     bio->data = bio->data0 = (char *)(intptr_t)txn->data.ptr.buffer;
@@ -473,7 +489,7 @@ static struct flat_binder_object *bio_alloc_obj(struct binder_io *bio)
 {
     struct flat_binder_object *obj;
 
-    obj = bio_alloc(bio, sizeof(*obj));
+    obj = bio_alloc(bio, sizeof(*obj));//-->[bio_alloc]
 
     if (obj && bio->offs_avail) {
         bio->offs_avail--;
@@ -505,13 +521,13 @@ void bio_put_obj(struct binder_io *bio, void *ptr)
     obj->binder = (uintptr_t)ptr;
     obj->cookie = 0;
 }
-
+//当找到服务的handle, 则调用bio_put_ref(reply, handle)，将handle封装到reply.
 void bio_put_ref(struct binder_io *bio, uint32_t handle)
 {
     struct flat_binder_object *obj;
 
     if (handle)
-        obj = bio_alloc_obj(bio);
+        obj = bio_alloc_obj(bio);//-->[bio_alloc_obj]
     else
         obj = bio_alloc(bio, sizeof(*obj));
 
@@ -519,7 +535,7 @@ void bio_put_ref(struct binder_io *bio, uint32_t handle)
         return;
 
     obj->flags = 0x7f | FLAT_BINDER_FLAG_ACCEPTS_FDS;
-    obj->type = BINDER_TYPE_HANDLE;
+    obj->type = BINDER_TYPE_HANDLE;//返回的是HANDLE类型
     obj->handle = handle;
     obj->cookie = 0;
 }

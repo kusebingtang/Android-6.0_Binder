@@ -226,8 +226,8 @@ static struct binder_transaction_log_entry *binder_transaction_log_add(
 }
 
 struct binder_context {
-	struct binder_node *binder_context_mgr_node;
-	kuid_t binder_context_mgr_uid;
+	struct binder_node *binder_context_mgr_node;// service manager所对应的binder_node;
+	kuid_t binder_context_mgr_uid;// 运行service manager的线程uid
 	const char *name;
 };
 
@@ -932,7 +932,7 @@ static struct binder_node *binder_new_node(struct binder_proc *proc,
 	struct rb_node *parent = NULL;
 	struct binder_node *node;
 
-	while (*p) {
+	while (*p) { //首次进来为空
 		parent = *p;
 		// 根据 parent 的偏移量获取 node 
 		node = rb_entry(parent, struct binder_node, rb_node);
@@ -945,20 +945,21 @@ static struct binder_node *binder_new_node(struct binder_proc *proc,
 			return NULL;
 	}
 
-	// 刚开始肯定是 null ，创建一个 binder_node 
+	// 刚开始肯定是 null ，创建一个 binder_node 分配内核空间
 	node = kzalloc(sizeof(*node), GFP_KERNEL);
 	if (node == NULL)
 		return NULL;
 	binder_stats_created(BINDER_STAT_NODE);
+	// 将新创建的node对象添加到proc红黑树；
 	rb_link_node(&node->rb_node, parent, p);// 添加到 binder_proc 的 nodes 中
 	rb_insert_color(&node->rb_node, &proc->nodes);// 调整红黑树的颜色
 	node->debug_id = ++binder_last_id;
 	node->proc = proc;
 	node->ptr = ptr;
 	node->cookie = cookie;
-	node->work.type = BINDER_WORK_NODE;
+	node->work.type = BINDER_WORK_NODE;//设置binder_work的type
 	INIT_LIST_HEAD(&node->work.entry);
-	INIT_LIST_HEAD(&node->async_todo);
+	INIT_LIST_HEAD(&node->async_todo);//创建binder_node的async_todo
 	binder_debug(BINDER_DEBUG_INTERNAL_REFS,
 		     "%d:%d node %d u%016llx c%016llx created\n",
 		     proc->pid, current->pid, node->debug_id,
@@ -2492,6 +2493,7 @@ static int binder_thread_write(struct binder_proc *proc,
 				binder_user_error("%d:%d ERROR: BC_ENTER_LOOPER called after BC_REGISTER_LOOPER\n",
 					proc->pid, thread->pid);
 			}
+			//设置该线程的looper状态
 			thread->looper |= BINDER_LOOPER_STATE_ENTERED;
 			break;
 		case BC_EXIT_LOOPER:
@@ -3169,7 +3171,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		goto out;
 	}
 	// 把用户空间数据 ubuf 拷贝到 bwr
-	if (copy_from_user(&bwr, ubuf, sizeof(bwr))) {//copy的为数据头，非有效数据
+	if (copy_from_user(&bwr, ubuf, sizeof(bwr))) {//把用户空间数据ubuf拷贝到bwr|copy的为数据头，非有效数据
 		ret = -EFAULT;
 		goto out;
 	}
@@ -3180,6 +3182,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		     (u64)bwr.read_size, (u64)bwr.read_buffer);
  	// 当写缓存中有数据，则执行 binder 写操作
 	if (bwr.write_size > 0) {
+		//-->[binder_thread_write]
 		ret = binder_thread_write(proc, thread,//-->核心方法
 					  bwr.write_buffer,
 					  bwr.write_size,
@@ -3193,6 +3196,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		}
 	}
 	if (bwr.read_size > 0) {// 当读缓存中有数据，则执行 binder 读操作
+		//-->[binder_thread_read]
 		ret = binder_thread_read(proc, thread, bwr.read_buffer,//-->核心方法-->service_manager已被唤醒
 					 bwr.read_size,
 					 &bwr.read_consumed,
@@ -3202,7 +3206,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		if (!list_empty(&proc->todo))
 			wake_up_interruptible(&proc->wait);
 		if (ret < 0) {// 当读失败，再将bwr数据写回用户空间，并返回
-			if (copy_to_user(ubuf, &bwr, sizeof(bwr)))
+			if (copy_to_user(ubuf, &bwr, sizeof(bwr)))//将内核数据bwr拷贝到用户空间ubuf
 				ret = -EFAULT;
 			goto out;
 		}
@@ -3228,7 +3232,7 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp)
 	struct binder_context *context = proc->context;
 
 	kuid_t curr_euid = current_euid();
- 	// 管理者只有一个（只能被设置一次）
+ 	// 管理者只有一个（只能被设置一次）保证只创建一次mgr_node对象
 	if (context->binder_context_mgr_node) {
 		pr_err("BINDER_SET_CONTEXT_MGR already set\n");
 		ret = -EBUSY;
@@ -3247,10 +3251,10 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp)
 			goto out;
 		}
 	} else {
-		context->binder_context_mgr_uid = curr_euid;
+		context->binder_context_mgr_uid = curr_euid;//设置当前线程euid作为Service Manager的uid
 	}
 	// 静态变量 binder_context_mgr_node = binder_new_node
-	context->binder_context_mgr_node = binder_new_node(proc, 0, 0);//TODO-->
+	context->binder_context_mgr_node = binder_new_node(proc, 0, 0);//TODO-->[binder_new_node]
 	if (!context->binder_context_mgr_node) {
 		ret = -ENOMEM;
 		goto out;

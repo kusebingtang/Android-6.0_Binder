@@ -16,8 +16,8 @@ struct binder_io
     size_t data_avail;     /* bytes available in data buffer */
     size_t offs_avail;     /* entries available in offsets array */
 
-    char *data0;           /* start of data buffer */
-    binder_size_t *offs0;  /* start of offsets buffer */
+    char *data0;           //data buffer起点位置
+    binder_size_t *offs0;  //buffer偏移量的起点位置
     uint32_t flags;
     uint32_t unused;
 };
