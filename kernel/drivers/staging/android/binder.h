@@ -64,6 +64,9 @@ struct binder_object_header {
  * contains offsets into the data where these structures occur.  The Binder
  * driver takes care of re-writing the structure type and data as it moves
  * between processes.
+ * 如果数据中含有Binder实体和Binder引用，就需要告诉Binder驱动程序它们的具体位置，以便Binder驱动程序能够去维护它们。
+ * data.offsets的作用就在这里了，它指定在data.buffer缓冲区中，所有Binder实体或者引用的偏移位置。
+ * 每一个Binder实体或者引用，通过struct flat_binder_object 来表示
  */
 struct flat_binder_object {
 	struct binder_object_header	hdr;

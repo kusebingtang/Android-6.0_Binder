@@ -51,7 +51,7 @@ static DEFINE_MUTEX(binder_deferred_lock);
 static DEFINE_MUTEX(binder_mmap_lock);
 
 static HLIST_HEAD(binder_devices);
-static HLIST_HEAD(binder_procs);
+static HLIST_HEAD(binder_procs);//全局哈希表binder_procs
 static HLIST_HEAD(binder_deferred_list);
 static HLIST_HEAD(binder_dead_nodes);
 
@@ -252,16 +252,16 @@ struct binder_work {
 struct binder_node {
 	int debug_id;
 	struct binder_work work;
-	union {
+	union {// rb_node和dead_node组成一个联合体。 如果这个Binder实体还在正常使用，则使用rb_node来连入proc->nodes所表示的红黑树的节点，这棵红黑树用来组织属于这个进程的所有Binder实体；如果这个Binder实体所属的进程已经销毁，而这个Binder实体又被其它进程所引用，则这个Binder实体通过dead_node进入到一个哈希表中去存放
 		struct rb_node rb_node;
 		struct hlist_node dead_node;
 	};
-	struct binder_proc *proc;
-	struct hlist_head refs;
-	int internal_strong_refs;
-	int local_weak_refs;
-	int local_strong_refs;
-	binder_uintptr_t ptr;
+	struct binder_proc *proc;//proc成员变量就是表示这个Binder实例所属于进程了
+	struct hlist_head refs;//refs成员变量把所有引用了该Binder实体的Binder引用连接起来构成一个链表
+	int internal_strong_refs;//表示这个Binder实体的引用计数
+	int local_weak_refs;//表示这个Binder实体的引用计数
+	int local_strong_refs;//表示这个Binder实体的引用计数
+	binder_uintptr_t ptr;//ptr和cookie成员变量分别表示这个Binder实体在用户空间的地址以及附加数据
 	binder_uintptr_t cookie;
 	unsigned has_strong_ref:1;
 	unsigned pending_strong_ref:1;
@@ -321,7 +321,7 @@ enum binder_deferred_state {
 
 struct binder_proc {
 	struct hlist_node proc_node;
-	struct rb_root threads;// threads 树 保存 binder_proc 进程内用于处理用户请求的线程
+	struct rb_root threads;// threads 树 保存 binder_proc 进程内用于处理用户请求的=线程=
 	struct rb_root nodes; // nodes树 保存 binder_proc 进程内的 Binder 实体；
 	struct rb_root refs_by_desc; // 进程内的 Binder 引用，即引用的其它进程的 Binder 实体，以句柄作 key 值来组织
 	struct rb_root refs_by_node; // 进程内的 Binder 引用，即引用的其它进程的 Binder 实体，以地址作 key 值来组织
@@ -333,7 +333,7 @@ struct binder_proc {
 	struct hlist_node deferred_work_node;
 	int deferred_work;
 	void *buffer; // 指向内核虚拟空间的地址
-	ptrdiff_t user_buffer_offset;// 用户虚拟地址空间与内核虚拟地址空间的偏移量
+	ptrdiff_t user_buffer_offset;// 用户虚拟地址空间与内核虚拟地址空间的偏移量->即如果某个物理页面在内核空间中对应的虚拟地址是addr的话，那么这个物理页面在进程空间对应的虚拟地址就为addr + user_buffer_offset
 
 	struct list_head buffers;
 	struct rb_root free_buffers;
@@ -366,18 +366,18 @@ enum {
 };
 
 struct binder_thread {
-	struct binder_proc *proc;
-	struct rb_node rb_node;
+	struct binder_proc *proc;//proc表示这个线程所属的进程
+	struct rb_node rb_node;//用来链入这棵红黑树的节点了 binder_proc#threads
 	int pid;
-	int looper;
-	struct binder_transaction *transaction_stack;
+	int looper;//looper成员变量表示线程的状态
+	struct binder_transaction *transaction_stack;//transaction_stack表示线程正在处理的事务
 	struct list_head todo;
-	uint32_t return_error; /* Write failed, return error code in read buf */
+	uint32_t return_error; /* Write failed, return error code in read buf return_error和return_error2表示操作结果返回码*/
 	uint32_t return_error2; /* Write failed, return error code in read */
 		/* buffer. Used when sending a reply to a dead process that */
 		/* we are also waiting on */
-	wait_queue_head_t wait;
-	struct binder_stats stats;
+	wait_queue_head_t wait;//wait用来阻塞线程等待某个事件的发生
+	struct binder_stats stats;//stats用来保存一些统计信息
 };
 
 struct binder_transaction {
@@ -575,7 +575,7 @@ static struct binder_buffer *binder_buffer_lookup(struct binder_proc *proc,
 //binder_update_page_range 主要完成工作：分配物理空间，将物理空间映射到内核空间，将物理空间映射到进程空间
 static int binder_update_page_range(struct binder_proc *proc, int allocate,
 				    void *start, void *end,
-				    struct vm_area_struct *vma)
+				    struct vm_area_struct *vma)//参数vma代表了要插入的进程的地址空间
 {
 	void *page_addr;
 	unsigned long user_page_addr;
@@ -615,7 +615,7 @@ static int binder_update_page_range(struct binder_proc *proc, int allocate,
 		goto err_no_vma;
 	}
 
-	for (page_addr = start; page_addr < end; page_addr += PAGE_SIZE) {
+	for (page_addr = start; page_addr < end; page_addr += PAGE_SIZE) {//要分配物理页面的虚拟地址空间范围为(start ~ end)
 		int ret;
 
 		page = &proc->pages[(page_addr - proc->buffer) / PAGE_SIZE];
@@ -2678,7 +2678,7 @@ static int binder_thread_read(struct binder_proc *proc,
 	int wait_for_proc_work;
 
 	if (*consumed == 0) {//如果 consumed==0，则写入一个 BR_NOOP
-		if (put_user(BR_NOOP, (uint32_t __user *)ptr))
+		if (put_user(BR_NOOP, (uint32_t __user *)ptr))//写入一个值BR_NOOP到参数ptr指向的缓冲区中去，即用户传进来的bwr.read_buffer缓冲区
 			return -EFAULT;
 		ptr += sizeof(uint32_t);
 	}
@@ -2707,7 +2707,7 @@ retry:
 	}
 
 
-	thread->looper |= BINDER_LOOPER_STATE_WAITING;
+	thread->looper |= BINDER_LOOPER_STATE_WAITING;//设置thread的状态为BINDER_LOOPER_STATE_WAITING,表示线程处于等待状态
 	if (wait_for_proc_work)
 		proc->ready_threads++;
 
@@ -2725,12 +2725,12 @@ retry:
 			wait_event_interruptible(binder_user_error_wait,
 						 binder_stop_on_user_error < 2);
 		}
-		binder_set_nice(proc->default_priority);
-		if (non_block) {
+		binder_set_nice(proc->default_priority);//函数设置当前线程的优先级别为proc->default_priority
+		if (non_block) {//如果文件打开模式为非阻塞模式，即non_block为true
 			if (!binder_has_proc_work(proc, thread))
 				ret = -EAGAIN;
 		} else
-			ret = wait_event_freezable_exclusive(proc->wait, binder_has_proc_work(proc, thread));
+			ret = wait_event_freezable_exclusive(proc->wait, binder_has_proc_work(proc, thread));//进入休眠状态，等待请求到来再唤醒了
 	} else {
 		if (non_block) {// 非阻塞
 			if (!binder_has_thread_work(thread))
@@ -3051,7 +3051,7 @@ static struct binder_thread *binder_get_thread(struct binder_proc *proc)
 {
 	struct binder_thread *thread = NULL;
 	struct rb_node *parent = NULL;//红黑树节点
-	struct rb_node **p = &proc->threads.rb_node;
+	struct rb_node **p = &proc->threads.rb_node;//在进程proc->threads表示的红黑树中进行查找
 	// 根据当前进程的 pid，从 binder_proc 中查找相应的 binder_thread
 	while (*p) {
 		parent = *p;
@@ -3069,7 +3069,7 @@ static struct binder_thread *binder_get_thread(struct binder_proc *proc)
 		if (thread == NULL)
 			return NULL;
 		binder_stats_created(BINDER_STAT_THREAD);
-		thread->proc = proc;
+		thread->proc = proc;//保存这个线程所属的进程
 		thread->pid = current->pid;// 保存当前进程(线程)的 pid
 		init_waitqueue_head(&thread->wait);//初始化等待队列和工作队列
 		INIT_LIST_HEAD(&thread->todo); // 初始化线程的 todo 队列
@@ -3259,6 +3259,7 @@ static int binder_ioctl_set_ctx_mgr(struct file *filp)
 		ret = -ENOMEM;
 		goto out;
 	}
+	//始化了binder_context_mgr_node的引用计数值
 	context->binder_context_mgr_node->local_weak_refs++;
 	context->binder_context_mgr_node->local_strong_refs++;
 	context->binder_context_mgr_node->has_strong_ref = 1;
@@ -3293,7 +3294,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		goto err_unlocked;
 
 	binder_lock(__func__);
-	thread = binder_get_thread(proc); // 获取 binder_thread -->[binder_get_thread]
+	thread = binder_get_thread(proc); // 获取 binder_thread(就是执行函数的线程了) -->[binder_get_thread]
 	if (thread == NULL) {
 		ret = -ENOMEM;
 		goto err;
@@ -3342,7 +3343,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	}
 	ret = 0;
 err:
-	if (thread)
+	if (thread)//binder_ioctl函数返回之前，执行了下面语句
 		thread->looper &= ~BINDER_LOOPER_STATE_NEED_RETURN;
 	binder_unlock(__func__);
 	wait_event_interruptible(binder_user_error_wait, binder_stop_on_user_error < 2);
@@ -3405,8 +3406,8 @@ user_buffer_offset是虚拟进程地址与虚拟内核地址的差值(该值为�
 static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 {
 	int ret;
-	struct vm_struct *area;// 内核虚拟空间
-	struct binder_proc *proc = filp->private_data;// 从 filp 中获取之前打开保存的
+	struct vm_struct *area;// 内核虚拟空间->一块连续的虚拟地址空间区域-struct vm_struct表示的地址空间范围是(3G + 896M + 8M) ~ 4G
+	struct binder_proc *proc = filp->private_data;// 从 filp 中获取之前打开设备文件/dev/binder时创建的struct binder_proc结构
 	const char *failure_string;
 	struct binder_buffer *buffer;
 
@@ -3479,7 +3480,7 @@ static int binder_mmap(struct file *filp, struct vm_area_struct *vma)
 	binder_insert_free_buffer(proc, buffer);// 将空闲 buffer 放入 proc->free_buffers 中
 	proc->free_async_space = proc->buffer_size / 2;// 异步可用空间大小为 buffer 总大小的一半。
 	barrier();
-	proc->files = get_files_struct(current);
+	proc->files = get_files_struct(current);//最后，还初始化了proc结构体的free_async_space、files和vma三个成员变量
 	proc->vma = vma;
 	proc->vma_vm_mm = vma->vm_mm;
 
@@ -3536,6 +3537,7 @@ static int binder_open(struct inode *nodp, struct file *filp)
 	binder_lock(__func__);//打开锁--->同步锁，因为 binder 支持多线程访问
 
 	binder_stats_created(BINDER_STAT_PROC);// BINDER_PROC 对象创建数加1 
+	//这个进程上下文信息同时还会保存在一个全局哈希表binder_procs中，驱动程序内部使用
 	hlist_add_head(&proc->proc_node, &binder_procs);//加入链表-->将 proc_node 节点添加到 binder_procs 为表头的队列
 	proc->pid = current->group_leader->pid;
 	INIT_LIST_HEAD(&proc->delivered_death);// 初始化已分发的死亡通知列表
@@ -4326,7 +4328,7 @@ static int __init binder_init(void)
 	 * Copy the module_parameter string, because we don't want to
 	 * tokenize it in-place.
 	 */
-	device_names = kzalloc(strlen(binder_devices_param) + 1, GFP_KERNEL);//分配内存
+	device_names = kzalloc(strlen(binder_devices_param) + 1, GFP_KERNEL);//分配内核内存
 	if (!device_names) {
 		ret = -ENOMEM;
 		goto err_alloc_device_names_failed;
