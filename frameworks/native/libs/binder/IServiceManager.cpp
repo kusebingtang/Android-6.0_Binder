@@ -42,6 +42,8 @@ namespace android {
    1. new BpServiceManager(new BpBinder) ==》 new Proxy(binder==BinderProxy)
    2. remote.transact -->远程调用  
    3. remote == BpBinder
+   new BpServiceManager(new BpBinder(0))，在初始化过程中，
+   比较重要工作的是类BpRefBase的mRemote指向new BpBinder(0)，从而BpServiceManager能够利用Binder进行通过通信。
 3. java 层 --- ServiceManager.addService
    1. new ServiceManagerProxy(new BinderProxy)
    2. mRemote == BinderProxy
@@ -51,12 +53,11 @@ namespace android {
 sp<IServiceManager> defaultServiceManager()
 {
     if (gDefaultServiceManager != NULL) return gDefaultServiceManager;
-    
     {
-        AutoMutex _l(gDefaultServiceManagerLock);
+        AutoMutex _l(gDefaultServiceManagerLock);//加锁
         while (gDefaultServiceManager == NULL) {
             //TODO-->interface_cast|new BpServiceManager(new BpBinder) ==》 new Proxy(binder==BinderProxy)
-            gDefaultServiceManager = interface_cast<IServiceManager>(
+            gDefaultServiceManager = interface_cast<IServiceManager>(//interface_cast<IServiceManager>() 等价于 IServiceManager::asInterface()
                 ProcessState::self()->getContextObject(NULL));
             if (gDefaultServiceManager == NULL)//如果没有初始化成功，sleep一秒，重新进入while
                 sleep(1);
@@ -146,7 +147,7 @@ class BpServiceManager : public BpInterface<IServiceManager>
 {
 public:
     BpServiceManager(const sp<IBinder>& impl)
-        : BpInterface<IServiceManager>(impl)
+        : BpInterface<IServiceManager>(impl)//-->BpInterface
     {
     }
 

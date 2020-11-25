@@ -85,7 +85,7 @@ void BpBinder::ObjectManager::kill()
 }
 
 // ---------------------------------------------------------------------------
-
+//创建BpBinder对象中会将handle相对应Binder的弱引用增加1.
 BpBinder::BpBinder(int32_t handle)
     : mHandle(handle)
     , mAlive(1)
@@ -93,9 +93,10 @@ BpBinder::BpBinder(int32_t handle)
     , mObituaries(NULL)
 {
     ALOGV("Creating BpBinder %p handle %d\n", this, mHandle);
-
-    extendObjectLifetime(OBJECT_LIFETIME_WEAK);
-    IPCThreadState::self()->incWeakHandle(handle);
+    //设置BpBinder的生命周期类型为OBJECT_LIFETIME_WEAK，该类型特点是当强引用计数为0，弱应用计数不为0时，实际对象并不会被回收； 只有当弱引用计数也减到0时，实际对象和weakref_impl对象会同时被回收。
+    extendObjectLifetime(OBJECT_LIFETIME_WEAK);//延长对象的生命时间
+    IPCThreadState::self()->incWeakHandle(handle);//handle所对应的bindle弱引用 + 1
+    //incWeakHandle(handle)过程，向Binder驱动写入对BC_INCREFS和handle信息，其该handle所对应的Binder的弱引用增加1.
 }
 
 bool BpBinder::isDescriptorCached() const {
@@ -339,7 +340,7 @@ void BpBinder::onFirstRef()
 {
     ALOGV("onFirstRef BpBinder %p handle %d\n", this, mHandle);
     IPCThreadState* ipc = IPCThreadState::self();
-    if (ipc) ipc->incStrongHandle(mHandle);
+    if (ipc) ipc->incStrongHandle(mHandle);//incStrongHandle(handle)过程，向Binder驱动写入对BC_ACQUIRE和handle信息，其该handle所对应的Binder的强引用增加1.
 }
 
 void BpBinder::onLastStrongRef(const void* /*id*/)

@@ -67,13 +67,14 @@ protected:
     const bool mIsMain;
 };
 
-//TODO-->
+//TODO-->获取ProcessState对象(也是单例模式),每个进程有且只有一个ProcessState对象，存在则直接返回，不存在则创建
 sp<ProcessState> ProcessState::self()
 {
     Mutex::Autolock _l(gProcessMutex);//lock-->随着方法释放
     if (gProcess != NULL) {
         return gProcess;
     }
+    //实例化ProcessState-->[new ProcessState]
     gProcess = new ProcessState;
     return gProcess;
 }
@@ -83,7 +84,7 @@ void ProcessState::setContextObject(const sp<IBinder>& object)
     setContextObject(object, String16("default"));
 }
 
-/*创建一个BpBinder --- 客户端的对象*/
+/*创建一个BpBinder --- 客户端的对象|用于获取BpBinder对象，对于handle=0的BpBinder对象，存在则直接返回，不存在才创建*/
 sp<IBinder> ProcessState::getContextObject(const sp<IBinder>& /*caller*/)
 {
     return getStrongProxyForHandle(0);
@@ -164,26 +165,32 @@ bool ProcessState::becomeContextManager(context_check_func checkFunc, void* user
     }
     return mManagesContexts;
 }
-
+//根据handle值来查找对应的handle_entry,handle_entry是一个结构体，里面记录IBinder和weakref_type两个指针
 ProcessState::handle_entry* ProcessState::lookupHandleLocked(int32_t handle)
 {
     const size_t N=mHandleToObject.size();
+    //当handle大于mHandleToObject的长度时，进入该分支
     if (N <= (size_t)handle) {
         handle_entry e;
         e.binder = NULL;
         e.refs = NULL;
+        //从mHandleToObject的第N个位置开始，插入(handle+1-N)个e到队列中
         status_t err = mHandleToObject.insertAt(e, N, handle+1-N);
         if (err < NO_ERROR) return NULL;
     }
     return &mHandleToObject.editItemAt(handle);
 }
-
+/**
+ * 当handle值所对应的IBinder不存在或弱引用无效时会创建BpBinder，否则直接获取。 
+ * 针对handle==0的特殊情况，通过PING_TRANSACTION来判断是否准备就绪。
+ * 如果在context manager还未生效前，一个BpBinder的本地引用就已经被创建，那么驱动将无法提供context manager的引用
+*/
 sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
 {
     sp<IBinder> result;
 
     AutoMutex _l(mLock);
-
+    //查找handle对应的资源项-->[lookupHandleLocked]
     handle_entry* e = lookupHandleLocked(handle);
 
     if (e != NULL) {
@@ -192,7 +199,7 @@ sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
         // in getWeakProxyForHandle() for more info about this.
         IBinder* b = e->binder;
         if (b == NULL || !e->refs->attemptIncWeak(this)) {
-            if (handle == 0) {
+            if (handle == 0) {//针对handle==0的特殊情况
                 // Special case for context manager...
                 // The context manager is the only object for which we create
                 // a BpBinder proxy without already holding a reference.
@@ -214,6 +221,7 @@ sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
                 //TODO--> ping一下ServerManager是否工作
 
                 Parcel data;
+                //通过ping操作测试binder是否准备就绪
                 status_t status = IPCThreadState::self()->transact(
                         0, IBinder::PING_TRANSACTION, data, NULL, 0);
                 if (status == DEAD_OBJECT)
@@ -221,7 +229,7 @@ sp<IBinder> ProcessState::getStrongProxyForHandle(int32_t handle)
             }
 
             //TODO-->创建一个BpBinder(Client)--- 客户端的对象
-            b = new BpBinder(handle); 
+            b = new BpBinder(handle); //当handle值所对应的IBinder不存在或弱引用无效时，则创建BpBinder对象-->[new BpBinder()]
             e->binder = b;
             if (b) e->refs = b->getWeakRefs();
             result = b;
@@ -314,7 +322,7 @@ void ProcessState::giveThreadPoolName() {
 
 static int open_driver()
 {
-    int fd = open("/dev/binder", O_RDWR);
+    int fd = open("/dev/binder", O_RDWR);// 打开/dev/binder设备，建立与内核的Binder驱动的交互通道
     if (fd >= 0) {
         fcntl(fd, F_SETFD, FD_CLOEXEC);
         int vers = 0;
@@ -330,6 +338,7 @@ static int open_driver()
             fd = -1;
         }
         size_t maxThreads = DEFAULT_MAX_BINDER_THREADS;//设置驱动层最大的线程数15
+        // 通过ioctl设置binder驱动，能支持的最大线程数
         result = ioctl(fd, BINDER_SET_MAX_THREADS, &maxThreads);//ioctl-->
         if (result == -1) {
             ALOGE("Binder ioctl to set max threads failed: %s", strerror(errno));
@@ -337,7 +346,7 @@ static int open_driver()
     } else {
         ALOGW("Opening '/dev/binder' failed: %s\n", strerror(errno));
     }
-    return fd;
+    return fd;//返回binder设备文件FD
 }
 
 /*
@@ -345,6 +354,7 @@ ProcessState::self()
 1. 打开驱动：binder
 2. 设置线程最大数目：15个
 3. mmap  -- 设置共享内存大小 --- （1M-8K） 普通服务的大小
+DEFAULT_MAX_BINDER_THREADS = 15，binder默认的最大可并发访问的线程数为16
 */
 ProcessState::ProcessState()
     : mDriverFD(open_driver())//打开binder驱动，-->open("/dev/binder", O_RDWR);
@@ -352,7 +362,7 @@ ProcessState::ProcessState()
     , mThreadCountLock(PTHREAD_MUTEX_INITIALIZER)
     , mThreadCountDecrement(PTHREAD_COND_INITIALIZER)
     , mExecutingThreadsCount(0)
-    , mMaxThreads(DEFAULT_MAX_BINDER_THREADS)
+    , mMaxThreads(DEFAULT_MAX_BINDER_THREADS)//binder默认的最大可并发访问的线程数为16
     , mManagesContexts(false)
     , mBinderContextCheckFunc(NULL)
     , mBinderContextUserData(NULL)
@@ -364,12 +374,12 @@ ProcessState::ProcessState()
         // have mmap (or whether we could possibly have the kernel module
         // availabla).
 #if !defined(HAVE_WIN32_IPC)
-        // mmap the binder, providing a chunk of virtual address space to receive transactions.
+        //采用内存映射函数mmap，给binder分配一块虚拟地址空间,用来接收事务
         mVMStart = mmap(0, BINDER_VM_SIZE, PROT_READ, MAP_PRIVATE | MAP_NORESERVE, mDriverFD, 0);//mmap映射虚拟内存，调用驱动层的binder_mmap方法(1M-8k),
         if (mVMStart == MAP_FAILED) {
             // *sigh*
             ALOGE("Using /dev/binder failed: unable to mmap transaction memory.\n");
-            close(mDriverFD);
+            close(mDriverFD);//没有足够空间分配给/dev/binder,则关闭驱动
             mDriverFD = -1;
         }
 #else

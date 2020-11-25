@@ -133,7 +133,7 @@ IBinder* BnInterface<INTERFACE>::onAsBinder()
 
 template<typename INTERFACE>
 inline BpInterface<INTERFACE>::BpInterface(const sp<IBinder>& remote)
-    : BpRefBase(remote)
+    : BpRefBase(remote)//-->BpRefBase
 {
 }
 

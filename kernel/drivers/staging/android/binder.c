@@ -3305,7 +3305,7 @@ static long binder_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		if (ret)
 			goto err;
 		break;
-	case BINDER_SET_MAX_THREADS: // 设置 binder 最大支持的线程数
+	case BINDER_SET_MAX_THREADS: // 设置 binder 最大支持的线程数，第一次初始化ProcessState时候设置
 		if (copy_from_user(&proc->max_threads, ubuf, sizeof(proc->max_threads))) {
 			ret = -EINVAL;
 			goto err;
