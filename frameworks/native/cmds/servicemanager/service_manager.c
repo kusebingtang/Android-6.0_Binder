@@ -209,7 +209,7 @@ int do_add_service(struct binder_state *bs,
                    uint32_t handle, uid_t uid, int allow_isolated,
                    pid_t spid)
 {
-    struct svcinfo *si;
+    struct svcinfo *si;//svcinfo记录着服务名和handle信息
 
     //ALOGI("add_service('%s',%x,%s) uid=%d\n", str8(s, len), handle,
     //        allow_isolated ? "allow_isolated" : "!allow_isolated", uid);
@@ -246,7 +246,7 @@ int do_add_service(struct binder_state *bs,
         si->death.ptr = si;
         si->allow_isolated = allow_isolated;
         si->next = svclist; // svclist保存所有已注册的服务
-        svclist = si;
+        svclist = si;//svcinfo记录着服务名和handle信息，保存到svclist列表。
     }
     // 以 BC_ACQUIRE 命令，handle 为目标的信息，通过 ioctl 发送给 binder 驱动
     binder_acquire(bs, handle);//以 BC_ACQUIRE命令，handle为目标的信息，通过 ioctl发送给 binder驱动，binder_ref强引用 加 1操作

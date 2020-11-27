@@ -232,7 +232,7 @@ status_t flatten_binder(const sp<ProcessState>& /*proc*/,
         obj.cookie = 0;
     }
 
-    return finish_flatten_binder(binder, obj, out);//TODO-->
+    return finish_flatten_binder(binder, obj, out);//TODO-->[finish_flatten_binder]
 }
 
 status_t flatten_binder(const sp<ProcessState>& /*proc*/,

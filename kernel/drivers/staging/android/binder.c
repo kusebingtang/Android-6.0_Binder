@@ -904,11 +904,11 @@ static void binder_free_buf(struct binder_proc *proc,
 	}
 	binder_insert_free_buffer(proc, buffer);
 }
-
+//从binder_proc来根据binder指针ptr值，查询相应的binder_node。
 static struct binder_node *binder_get_node(struct binder_proc *proc,
 					   binder_uintptr_t ptr)
 {
-	struct rb_node *n = proc->nodes.rb_node;
+	struct rb_node *n = proc->nodes.rb_node;//用来链入这棵红黑树的节点了 binder_proc#threads
 	struct binder_node *node;
 
 	while (n) {
@@ -931,7 +931,7 @@ static struct binder_node *binder_new_node(struct binder_proc *proc,
 	struct rb_node **p = &proc->nodes.rb_node;// 从 proc->nodes 中获取根节点 
 	struct rb_node *parent = NULL;
 	struct binder_node *node;
-
+	//红黑树位置查找
 	while (*p) { //首次进来为空
 		parent = *p;
 		// 根据 parent 的偏移量获取 node 
@@ -1079,7 +1079,7 @@ static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,
 	struct rb_node *parent = NULL;
 	struct binder_ref *ref, *new_ref;
 	struct binder_context *context = proc->context;
-
+  	//从refs_by_node红黑树，找到binder_ref则直接返回。
 	while (*p) {
 		parent = *p;
 		ref = rb_entry(parent, struct binder_ref, rb_node_node);
@@ -1091,24 +1091,27 @@ static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,
 		else
 			return ref;
 	}
+	//创建binder_ref
 	new_ref = kzalloc(sizeof(*ref), GFP_KERNEL);
 	if (new_ref == NULL)
 		return NULL;
 	binder_stats_created(BINDER_STAT_REF);
 	new_ref->debug_id = ++binder_last_id;
-	new_ref->proc = proc;
-	new_ref->node = node;
+	new_ref->proc = proc;//记录进程信息
+	new_ref->node = node;//记录binder节点
 	rb_link_node(&new_ref->rb_node_node, parent, p);
 	rb_insert_color(&new_ref->rb_node_node, &proc->refs_by_node);
-
+ 	//计算binder引用的handle值，该值返回给target_proc进程
 	new_ref->desc = (node == context->binder_context_mgr_node) ? 0 : 1;
+	//从红黑树最最左边的handle对比，依次递增，直到红黑树遍历结束或者找到更大的handle则结束。
 	for (n = rb_first(&proc->refs_by_desc); n != NULL; n = rb_next(n)) {
+		//根据binder_ref的成员变量rb_node_desc的地址指针n，来获取binder_ref的首地址
 		ref = rb_entry(n, struct binder_ref, rb_node_desc);
 		if (ref->desc > new_ref->desc)
 			break;
 		new_ref->desc = ref->desc + 1;
 	}
-
+	// 将新创建的new_ref 插入proc->refs_by_desc红黑树
 	p = &proc->refs_by_desc.rb_node;
 	while (*p) {
 		parent = *p;
@@ -1121,8 +1124,8 @@ static struct binder_ref *binder_get_ref_for_node(struct binder_proc *proc,
 		else
 			BUG();
 	}
-	rb_link_node(&new_ref->rb_node_desc, parent, p);
-	rb_insert_color(&new_ref->rb_node_desc, &proc->refs_by_desc);
+	rb_link_node(&new_ref->rb_node_desc, parent, p);//插入红黑树
+	rb_insert_color(&new_ref->rb_node_desc, &proc->refs_by_desc);//调整颜色
 	if (node) {
 		hlist_add_head(&new_ref->node_entry, &node->refs);
 
@@ -1576,9 +1579,10 @@ static int binder_translate_binder(struct flat_binder_object *fp,
 	struct binder_ref *ref;
 	struct binder_proc *proc = thread->proc;
 	struct binder_proc *target_proc = t->to_proc;
-
+	//-->[binder_get_node]
 	node = binder_get_node(proc, fp->binder);
 	if (!node) {
+		//服务所在进程 创建binder_node实体-->[binder_new_node]
 		node = binder_new_node(proc, fp->binder, fp->cookie);
 		if (!node)
 			return -ENOMEM;
@@ -1595,17 +1599,17 @@ static int binder_translate_binder(struct flat_binder_object *fp,
 	}
 	if (security_binder_transfer_binder(proc->tsk, target_proc->tsk))
 		return -EPERM;
-
+	//servicemanager进程binder_ref-->[binder_get_ref_for_node]
 	ref = binder_get_ref_for_node(target_proc, node);//创建一个 binder_ref
 	if (!ref)
 		return -EINVAL;
-
+	//调整type为HANDLE类型
 	if (fp->hdr.type == BINDER_TYPE_BINDER)
 		fp->hdr.type = BINDER_TYPE_HANDLE;//改变类型为 BINDER_TYPE_HANDLE
 	else
 		fp->hdr.type = BINDER_TYPE_WEAK_HANDLE;
 	fp->binder = 0;
-	fp->handle = ref->desc;
+	fp->handle = ref->desc;//设置handle值
 	fp->cookie = 0;
 	binder_inc_ref(ref, fp->hdr.type == BINDER_TYPE_HANDLE, &thread->todo);
 
@@ -1915,7 +1919,7 @@ static void binder_transaction(struct binder_proc *proc,
 				return_error = BR_FAILED_REPLY;
 				goto err_invalid_target_handle;
 			}
-			target_node = ref->node;
+			target_node = ref->node;// handle=0则找到servicemanager实体-target_node = binder_context_mgr_node;
 		} else {
 			// 添加服务时传的 handle 值是 0 
 			target_node = context->binder_context_mgr_node;/* 获取目标对象的 target_node，目标是 service_manager，所以可以直接使用全局变量binder_context_mgr_node */
@@ -2012,7 +2016,7 @@ static void binder_transaction(struct binder_proc *proc,
 	t->to_proc = target_proc;// 此次通信目标进程为(service_manager)进程
 	t->to_thread = target_thread;
 	t->code = tr->code;// 此次通信 code(ADD_SERVICE_TRANSACTION)
-	t->flags = tr->flags;
+	t->flags = tr->flags;// 此次通信flags = 0
 	t->priority = task_nice(current);
 
 	trace_binder_transaction(reply, t, target_node);
@@ -2031,8 +2035,8 @@ static void binder_transaction(struct binder_proc *proc,
 	t->buffer->target_node = target_node;
 	trace_binder_transaction_alloc_buf(t->buffer);
 	if (target_node)
-		binder_inc_node(target_node, 1, 0, NULL);
-	// 把数据拷贝到目标进程空间
+		binder_inc_node(target_node, 1, 0, NULL);//引用计数加1
+	// 把数据拷贝到目标进程空间--分别拷贝用户空间的binder_transaction_data中ptr.buffer和ptr.offsets到内核
 	off_start = (binder_size_t *)(t->buffer->data +
 				      ALIGN(tr->data_size, sizeof(void *)));
 	offp = off_start;
@@ -3182,7 +3186,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		     (u64)bwr.read_size, (u64)bwr.read_buffer);
  	// 当写缓存中有数据，则执行 binder 写操作
 	if (bwr.write_size > 0) {
-		//-->[binder_thread_write]
+		//将数据放入目标进程-->[binder_thread_write]
 		ret = binder_thread_write(proc, thread,//-->核心方法
 					  bwr.write_buffer,
 					  bwr.write_size,
@@ -3196,7 +3200,7 @@ static int binder_ioctl_write_read(struct file *filp,
 		}
 	}
 	if (bwr.read_size > 0) {// 当读缓存中有数据，则执行 binder 读操作
-		//-->[binder_thread_read]
+		//读取自己队列的数据-->[binder_thread_read]
 		ret = binder_thread_read(proc, thread, bwr.read_buffer,//-->核心方法-->service_manager已被唤醒
 					 bwr.read_size,
 					 &bwr.read_consumed,

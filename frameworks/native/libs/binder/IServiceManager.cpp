@@ -180,6 +180,7 @@ public:
         data.writeString16(name);//写入名字,例如-->"media.player"
         data.writeStrongBinder(service);// // MediaPlayerService 对象 
         data.writeInt32(allowIsolated ? 1 : 0);//默认false
+        //-->[BpBinder::transact]
         status_t err = remote()->transact(ADD_SERVICE_TRANSACTION, data, &reply);//remote() 指向的是 BpBinder 对象
         return err == NO_ERROR ? reply.readExceptionCode() : err;
     }

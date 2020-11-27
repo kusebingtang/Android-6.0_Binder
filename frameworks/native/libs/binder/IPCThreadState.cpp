@@ -914,7 +914,7 @@ status_t IPCThreadState::writeTransactionData(int32_t cmd, uint32_t binderFlags,
     tr.target.ptr = 0; /* Don't pass uninitialized stack data to a remote process */
     tr.target.handle = handle; // handle = 0 ，代表是要转发给 ServiceManager 进程
     tr.code = code;            // code = ADD_SERVICE_TRANSACTION 动作是添加服务
-    tr.flags = binderFlags;
+    tr.flags = binderFlags;    // binderFlags = 0
     tr.cookie = 0;
     tr.sender_pid = 0;
     tr.sender_euid = 0;
@@ -922,9 +922,9 @@ status_t IPCThreadState::writeTransactionData(int32_t cmd, uint32_t binderFlags,
     const status_t err = data.errorCheck();// data 为记录 Media 服务信息的 Parcel 对象
     if (err == NO_ERROR) {
         tr.data_size = data.ipcDataSize(); // mDataSize， 这个里面有多少数据
-        tr.data.ptr.buffer = data.ipcData();
-        tr.offsets_size = data.ipcObjectsCount()*sizeof(binder_size_t);
-        tr.data.ptr.offsets = data.ipcObjects();
+        tr.data.ptr.buffer = data.ipcData();//mData
+        tr.offsets_size = data.ipcObjectsCount()*sizeof(binder_size_t);//mObjectsSize
+        tr.data.ptr.offsets = data.ipcObjects();//mObjects
     } else if (statusBuffer) {
         tr.flags |= TF_STATUS_CODE;
         *statusBuffer = err;

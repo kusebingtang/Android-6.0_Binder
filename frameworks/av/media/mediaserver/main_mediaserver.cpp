@@ -126,10 +126,12 @@ int main(int argc __unused, char** argv)
             setpgid(0, 0);                      // but if I die first, don't kill my parent
         }
         InitializeIcuOrDie();
+        //获得ProcessState实例对象-->[ProcessState::self()]
         sp<ProcessState> proc(ProcessState::self());
         sp<IServiceManager> sm = defaultServiceManager();//defaultServiceManager() = new BpServiceManager(new BpBinder(0))
         ALOGI("ServiceManager: %p", sm.get());
         AudioFlinger::instantiate();
+        //注册多媒体服务-->[MediaPlayerService::instantiate()]
         MediaPlayerService::instantiate();
         ResourceManagerService::instantiate();
         CameraService::instantiate();
@@ -137,7 +139,9 @@ int main(int argc __unused, char** argv)
         SoundTriggerHwService::instantiate();
         RadioService::instantiate();
         registerExtensions();
+        //启动Binder线程池
         ProcessState::self()->startThreadPool();
+        //当前线程加入到线程池
         IPCThreadState::self()->joinThreadPool();
     }
 }

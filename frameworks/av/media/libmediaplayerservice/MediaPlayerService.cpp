@@ -267,6 +267,7 @@ static bool checkPermission(const char* permissionString) {
 /* static */ bool MediaPlayerService::AudioOutput::mIsOnEmulator = false;
 
 void MediaPlayerService::instantiate() {
+    //-->[IServiceManager.cpp ::BpServiceManager|addService]
     defaultServiceManager()->addService(
             String16("media.player"), new MediaPlayerService());
 }
