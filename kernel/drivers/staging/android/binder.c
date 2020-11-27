@@ -1836,6 +1836,12 @@ static int binder_fixup_parent(struct binder_transaction *t,
 
 	return 0;
 }
+
+/**
+ * 这个过程非常重要，分两种情况来说：
+ * - 当请求服务的进程与服务属于不同进程，则为请求服务所在进程创建binder_ref对象，指向服务进程中的binder_node;
+ * - 当请求服务的进程与服务属于同一进程，则不再创建新对象，只是引用计数加1，并且修改type为 BINDER_TYPE_BINDER 或 BINDER_TYPE_WEAK_BINDER。
+*/
 //路由过程：handle -> ref -> target_node -> target_proc
 static void binder_transaction(struct binder_proc *proc,
 			       struct binder_thread *thread,
@@ -2741,7 +2747,7 @@ retry:
 				ret = -EAGAIN;
 		} else
 			// 如果是阻塞的读操作，则让进程阻塞在 proc 的 wait 队列上，直到 binder_has_proc_work(thread) 为 true，即进程有工作待处理
-			ret = wait_event_freezable(thread->wait, binder_has_thread_work(thread)); // 进入等待，直到 service_manager 来唤醒
+			ret = wait_event_freezable(thread->wait, binder_has_thread_work(thread)); // 进入等待，直到 service_manager 来唤醒-当线程todo队列有数据则执行往下执行；当线程todo队列没有数据，则进入休眠等待状态
 	}
 
 	binder_lock(__func__);
@@ -2762,7 +2768,7 @@ retry:
 		if (!list_empty(&thread->todo)) {//前面把一个 binder_work添加到 thread->todo队列中，所以 w不为空，类型为 BINDER_WORK_TRANSACTION_COMPLETE
 			w = list_first_entry(&thread->todo, struct binder_work,
 					     entry);
-		} else if (!list_empty(&proc->todo) && wait_for_proc_work) {
+		} else if (!list_empty(&proc->todo) && wait_for_proc_work) {// 线程todo队列没有数据, 则从进程todo对获取事务数据
 			w = list_first_entry(&proc->todo, struct binder_work,
 					     entry);
 		} else {
@@ -2777,7 +2783,7 @@ retry:
 			break;
 
 		switch (w->type) {
-		case BINDER_WORK_TRANSACTION: {
+		case BINDER_WORK_TRANSACTION: {//获取transaction数据
 			t = container_of(w, struct binder_transaction, work);//主要是把用户的请求复制到 service_manager中并对各种队列进行调整
 		} break;
 		case BINDER_WORK_TRANSACTION_COMPLETE: {
@@ -2903,7 +2909,7 @@ retry:
 		}
 
 		if (!t)
-			continue;
+			continue;//只有BINDER_WORK_TRANSACTION命令才能继续往下执行
 
 		BUG_ON(t->buffer == NULL);
 		if (t->buffer->target_node) {
@@ -2930,7 +2936,7 @@ retry:
 
 		if (t->from) {
 			struct task_struct *sender = t->from->proc->tsk;
-
+			//当非oneway的情况下,将调用者进程的pid保存到 sender_pid
 			tr.sender_pid = task_tgid_nr_ns(sender,
 							task_active_pid_ns(current));
 		} else {
@@ -2946,7 +2952,7 @@ retry:
 					ALIGN(t->buffer->data_size,
 					    sizeof(void *));
 
-		if (put_user(cmd, (uint32_t __user *)ptr))
+		if (put_user(cmd, (uint32_t __user *)ptr))//将cmd和数据写回用户空间
 			return -EFAULT;
 		ptr += sizeof(uint32_t);
 		if (copy_to_user(ptr, &tr, sizeof(tr)))
@@ -2973,7 +2979,7 @@ retry:
 			thread->transaction_stack = t;
 		} else {
 			t->buffer->transaction = NULL;
-			kfree(t);
+			kfree(t);//通信完成则运行释放
 			binder_stats_deleted(BINDER_STAT_TRANSACTION);
 		}
 		break;
@@ -2993,9 +2999,9 @@ done:
 		binder_debug(BINDER_DEBUG_THREADS,
 			     "%d:%d BR_SPAWN_LOOPER\n",
 			     proc->pid, thread->pid);
-		if (put_user(BR_SPAWN_LOOPER, (uint32_t __user *)buffer))
+		if (put_user(BR_SPAWN_LOOPER, (uint32_t __user *)buffer))// 生成 BR_SPAWN_LOOPER 命令，用于创建新的线程
 			return -EFAULT;
-		binder_stat_br(proc, thread, BR_SPAWN_LOOPER);// 生成BR_SPAWN_LOOPER命令，用于创建新的线程
+		binder_stat_br(proc, thread, BR_SPAWN_LOOPER);// 生成 BR_SPAWN_LOOPER 命令，用于创建新的线程
 		//用户空间IPCThreadState类中的IPCThreadState::waitForResponse()和IPCThreadState::executeCommand()两个方法共同处理Binder协议中的18个响应码
 	}
 	return 0;

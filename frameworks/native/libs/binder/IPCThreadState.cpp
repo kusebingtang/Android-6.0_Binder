@@ -685,17 +685,17 @@ status_t IPCThreadState::clearDeathNotification(int32_t handle, BpBinder* proxy)
     mOut.writePointer((uintptr_t)proxy);
     return NO_ERROR;
 }
-
+//每个线程都有一个IPCThreadState，每个IPCThreadState中都有一个mIn、一个mOut。
 IPCThreadState::IPCThreadState()
-    : mProcess(ProcessState::self()),
+    : mProcess(ProcessState::self()),//成员变量mProcess保存了ProcessState变量(每个进程只有一个)。
       mMyThreadId(gettid()),
       mStrictModePolicy(0),
       mLastTransactionBinderFlags(0)
 {
     pthread_setspecific(gTLS, this); // 通过 pthread_setspecific/pthread_getspecific  来设置获取 IPCThreadState
     clearCaller();
-    mIn.setDataCapacity(256); // mIn 用来接收来自 Binder 设备的数据
-    mOut.setDataCapacity(256);// mOut用来存储发往 Binder 设备的数据
+    mIn.setDataCapacity(256); // mIn 用来接收来自 Binder 设备的数据 默认大小为256字节
+    mOut.setDataCapacity(256);// mOut用来存储发往 Binder 设备的数据 默认大小为256字节
 }
 
 IPCThreadState::~IPCThreadState()

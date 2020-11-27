@@ -298,11 +298,13 @@ status_t unflatten_binder(const sp<ProcessState>& proc,
 
     if (flat) {
         switch (flat->type) {
-            case BINDER_TYPE_BINDER:
+            case BINDER_TYPE_BINDER:// 当请求服务的进程与服务属于同一进程
                 *out = reinterpret_cast<IBinder*>(flat->cookie);
                 return finish_unflatten_binder(NULL, *flat, in);
             case BINDER_TYPE_HANDLE:
+                //请求服务的进程与服务属于不同进程-->[ProcessState::getStrongProxyForHandle]
                 *out = proc->getStrongProxyForHandle(flat->handle);
+                //创建BpBinder对象
                 return finish_unflatten_binder(
                     static_cast<BpBinder*>(out->get()), *flat, in);
         }
@@ -1331,7 +1333,7 @@ const char16_t* Parcel::readString16Inplace(size_t* outLen) const
     *outLen = 0;
     return NULL;
 }
-
+//readStrongBinder 的功能是 flat_binder_object 解析并创建BpBinder对象
 sp<IBinder> Parcel::readStrongBinder() const
 {
     sp<IBinder> val;

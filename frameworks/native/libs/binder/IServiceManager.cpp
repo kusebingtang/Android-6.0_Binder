@@ -151,14 +151,20 @@ public:
     {
     }
 
+    /**
+     * 请求服务(getService)过程，就是向servicemanager进程查询指定服务，当执行binder_transaction()时，会区分请求服务所属进程情况。
+     * 1|当请求服务的进程与服务属于不同进程，则为请求服务所在进程创建binder_ref对象，指向服务进程中的binder_node;最终readStrongBinder()，返回的是BpBinder对象；
+     * 2|当请求服务的进程与服务属于同一进程，则不再创建新对象，只是引用计数加1，并且修改type为BINDER_TYPE_BINDER或BINDER_TYPE_WEAK_BINDER。最终readStrongBinder()，返回的是BBinder对象的真实子类；
+    */
     virtual sp<IBinder> getService(const String16& name) const
     {
         unsigned n;
         for (n = 0; n < 5; n++){
+            //-->[checkService]
             sp<IBinder> svc = checkService(name);
             if (svc != NULL) return svc;
             ALOGI("Waiting for service %s...\n", String8(name).string());
-            sleep(1);
+            sleep(1);//当服务不存在则休眠1s再继续检索服务。该循环进行5次
         }
         return NULL;
     }
@@ -166,9 +172,11 @@ public:
     virtual sp<IBinder> checkService( const String16& name) const
     {
         Parcel data, reply;
+        //写入RPC头
         data.writeInterfaceToken(IServiceManager::getInterfaceDescriptor());
-        data.writeString16(name);
-        remote()->transact(CHECK_SERVICE_TRANSACTION, data, &reply);//remote(BpBinder)
+        data.writeString16(name);//写入服务名
+        remote()->transact(CHECK_SERVICE_TRANSACTION, data, &reply);//remote(BpBinder) code=CHECK_SERVICE_TRANSACTION
+        //-->[Parcel::readStrongBinder()]
         return reply.readStrongBinder();
     }
 
