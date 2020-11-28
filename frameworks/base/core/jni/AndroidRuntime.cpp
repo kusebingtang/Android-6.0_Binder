@@ -1436,6 +1436,8 @@ static const RegJNIRec gRegJNI[] = {
 
 /*
  * Register android native functions with the VM.
+ * 在Android系统开机过程中，Zygote启动时会有一个虚拟机注册过程，该过程调用
+ * AndroidRuntime::startReg方法来完成jni方法的注册。
  */
 /*static*/ int AndroidRuntime::startReg(JNIEnv* env)
 {
@@ -1456,6 +1458,7 @@ static const RegJNIRec gRegJNI[] = {
      */
     env->PushLocalFrame(200);
 
+    //注册jni方法-->[register_jni_procs]
     if (register_jni_procs(gRegJNI, NELEM(gRegJNI), env) < 0) {
         env->PopLocalFrame(NULL);
         return -1;

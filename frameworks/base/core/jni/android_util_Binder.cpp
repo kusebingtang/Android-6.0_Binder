@@ -214,7 +214,7 @@ bail:
 
 class JavaBBinderHolder;
 
-class JavaBBinder : public BBinder
+class JavaBBinder : public BBinder //JavaBBinder 该对象继承于BBinder对象。
 {
 public:
     JavaBBinder(JNIEnv* env, jobject object)
@@ -319,6 +319,7 @@ public:
         AutoMutex _l(mLock);
         sp<JavaBBinder> b = mBinder.promote();// 将弱指针升级为强指针，首次进来返回空指针
         if (b == NULL) {
+            //首次进来，创建JavaBBinder对象
             b = new JavaBBinder(env, obj);// 创建一个 JavaBBinder 对象并返回
             mBinder = b;
             ALOGV("Creating JavaBinder %p (refs %p) for Object %p, weakCount=%" PRId32 "\n",
@@ -543,12 +544,12 @@ static void proxy_cleanup(const void* id, void* obj, void* cleanupCookie)
 }
 
 static Mutex mProxyLock;
-
+//根据BpBinder(C++)生成BinderProxy(Java)对象. 主要工作是创建BinderProxy对象,并把BpBinder对象地址保存到BinderProxy.mObject成员变量. 
 jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& val)
 {
     if (val == NULL) return NULL;
 
-    if (val->checkSubclass(&gBinderOffsets)) {
+    if (val->checkSubclass(&gBinderOffsets)) { //返回false
         // One of our own!
         jobject object = static_cast<JavaBBinder*>(val.get())->object();
         LOGDEATH("objectForBinder %p: it's our own %p!\n", val.get(), object);
@@ -561,7 +562,7 @@ jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& val)
 
     // Someone else's...  do we know about it?
     jobject object = (jobject)val->findObject(&gBinderProxyOffsets);//从 BpBinder中查找 BinderProxy对象，第一次为 null
-    if (object != NULL) {
+    if (object != NULL) {//第一次object为null
         jobject res = jniGetReferent(env, object);
         if (res != NULL) {
             ALOGV("objectForBinder %p: found existing %p!\n", val.get(), res);
@@ -572,7 +573,7 @@ jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& val)
         val->detachObject(&gBinderProxyOffsets);
         env->DeleteGlobalRef(object);
     }
-
+    //创建BinderProxy对象
     object = env->NewObject(gBinderProxyOffsets.mClass, gBinderProxyOffsets.mConstructor);//创建 BinderProxy对象
     if (object != NULL) {
         LOGDEATH("objectForBinder %p: created new proxy %p !\n", val.get(), object);
@@ -599,17 +600,17 @@ jobject javaObjectForIBinder(JNIEnv* env, const sp<IBinder>& val)
 
     return object;
 }
-
+//根据Binde(Java)生成JavaBBinderHolder(C++)对象. 主要工作是创建JavaBBinderHolder对象,并把JavaBBinderHolder对象地址保存到Binder.mObject成员变量
 sp<IBinder> ibinderForJavaObject(JNIEnv* env, jobject obj)
 {
     if (obj == NULL) return NULL;
-
+    //Java层的Binder对象
     if (env->IsInstanceOf(obj, gBinderOffsets.mClass)) {// 是否是 Java层的 Binder对 象，此处是 AMS，if命中
         JavaBBinderHolder* jbh = (JavaBBinderHolder*)
             env->GetLongField(obj, gBinderOffsets.mObject);
-        return jbh != NULL ? jbh->get(env, obj) : NULL;// 返回 JavaBBinder对象
+        return jbh != NULL ? jbh->get(env, obj) : NULL;// 返回 JavaBBinder对象-->[android_util_Binder.cpp| sp<JavaBBinder> get(JNIEnv* env, jobject obj) ]
     }
-
+    //Java层的BinderProxy对象
     if (env->IsInstanceOf(obj, gBinderProxyOffsets.mClass)) {
         return (IBinder*)
             env->GetLongField(obj, gBinderProxyOffsets.mObject);
@@ -858,12 +859,15 @@ const char* const kBinderPathName = "android/os/Binder";
 
 static int int_register_android_os_Binder(JNIEnv* env)
 {
-    jclass clazz = FindClassOrDie(env, kBinderPathName);
+    jclass clazz = FindClassOrDie(env, kBinderPathName);//其中kBinderPathName = "android/os/Binder";查找kBinderPathName路径所属类
 
-    gBinderOffsets.mClass = MakeGlobalRefOrDie(env, clazz);
+    //将Java层Binder类保存到mClass变量
+    gBinderOffsets.mClass = MakeGlobalRefOrDie(env, clazz);//gBinderOffsets是全局静态结构体,gBinderOffsets保存了Binder.java类本身以及其成员方法execTransact()和成员属性mObject，
+    //将Java层execTransact()方法保存到mExecTransact变量；
     gBinderOffsets.mExecTransact = GetMethodIDOrDie(env, clazz, "execTransact", "(IJJI)Z");
+    //将Java层mObject属性保存到mObject变量
     gBinderOffsets.mObject = GetFieldIDOrDie(env, clazz, "mObject", "J");
-
+    //注册JNI方法
     return RegisterMethodsOrDie(
         env, kBinderPathName,
         gBinderMethods, NELEM(gBinderMethods));
@@ -899,7 +903,7 @@ jint android_os_Debug_getDeathObjectCount(JNIEnv* env, jobject clazz)
 static jobject android_os_BinderInternal_getContextObject(JNIEnv* env, jobject clazz)
 {
     /* 打开 binder驱动(ProcessState是单例的)，创建 BpBinder(handle) 对象，并返回 */
-    sp<IBinder> b = ProcessState::self()->getContextObject(NULL);
+    sp<IBinder> b = ProcessState::self()->getContextObject(NULL);//ProcessState::self()->getContextObject()等价于 new BpBinder(0);
     return javaObjectForIBinder(env, b);//将BpBinder于Java层的BinderProxy相互绑定
 }
 
@@ -935,10 +939,10 @@ const char* const kBinderInternalPathName = "com/android/internal/os/BinderInter
 
 static int int_register_android_os_BinderInternal(JNIEnv* env)
 {
-    jclass clazz = FindClassOrDie(env, kBinderInternalPathName);
+    jclass clazz = FindClassOrDie(env, kBinderInternalPathName);//其中kBinderInternalPathName = "com/android/internal/os/BinderInternal"
 
     gBinderInternalOffsets.mClass = MakeGlobalRefOrDie(env, clazz);
-    gBinderInternalOffsets.mForceGc = GetStaticMethodIDOrDie(env, clazz, "forceBinderGc", "()V");
+    gBinderInternalOffsets.mForceGc = GetStaticMethodIDOrDie(env, clazz, "forceBinderGc", "()V");//gBinderInternalOffsets保存了BinderInternal的forceBinderGc()方法。
 
     return RegisterMethodsOrDie(
         env, kBinderInternalPathName,
@@ -1088,7 +1092,7 @@ static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
         jniThrowNullPointerException(env, NULL);
         return JNI_FALSE;
     }
-
+    //java Parcel转为native Parcel
     Parcel* data = parcelForJavaObject(env, dataObj);//获取 data对象
     if (data == NULL) {
         return JNI_FALSE;
@@ -1097,7 +1101,7 @@ static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
     if (reply == NULL && replyObj != NULL) {
         return JNI_FALSE;
     }
-
+    //gBinderProxyOffsets.mObject中保存的是new BpBinder(0)对象
     IBinder* target = (IBinder*)//-->获取 BpBinder 对象
         env->GetLongField(obj, gBinderProxyOffsets.mObject);
     if (target == NULL) {
@@ -1121,7 +1125,7 @@ static jboolean android_os_BinderProxy_transact(JNIEnv* env, jobject obj,
         }
     }
 
-    //printf("Transact from Java code to %p sending: ", target); data->print();
+    //此处便是BpBinder::transact(), 经过native层，进入Binder驱动程序
     status_t err = target->transact(code, *data, reply, flags);//TODO-->BpBinder::transact
     //if (reply) printf("Transact from Java code to %p received: ", target); reply->print();
 
@@ -1254,9 +1258,11 @@ const char* const kBinderProxyPathName = "android/os/BinderProxy";
 
 static int int_register_android_os_BinderProxy(JNIEnv* env)
 {
-    jclass clazz = FindClassOrDie(env, "java/lang/Error");
+    jclass clazz = FindClassOrDie(env, "java/lang/Error");//gErrorOffsets保存了Error类信息
     gErrorOffsets.mClass = MakeGlobalRefOrDie(env, clazz);
 
+    //gBinderProxyOffsets保存了BinderProxy类的信息
+    //其中kBinderProxyPathName = "android/os/BinderProxy"
     clazz = FindClassOrDie(env, kBinderProxyPathName);
     gBinderProxyOffsets.mClass = MakeGlobalRefOrDie(env, clazz);
     gBinderProxyOffsets.mConstructor = GetMethodIDOrDie(env, clazz, "<init>", "()V");
@@ -1268,6 +1274,7 @@ static int int_register_android_os_BinderProxy(JNIEnv* env)
                                                 "Ljava/lang/ref/WeakReference;");
     gBinderProxyOffsets.mOrgue = GetFieldIDOrDie(env, clazz, "mOrgue", "J");
 
+    //gClassOffsets保存了Class.getName()方法
     clazz = FindClassOrDie(env, "java/lang/Class");
     gClassOffsets.mGetName = GetMethodIDOrDie(env, clazz, "getName", "()Ljava/lang/String;");
 
@@ -1282,10 +1289,13 @@ static int int_register_android_os_BinderProxy(JNIEnv* env)
 
 int register_android_os_Binder(JNIEnv* env)
 {
+    // 注册Binder类的jni方法
     if (int_register_android_os_Binder(env) < 0)
         return -1;
+    // 注册BinderInternal类的jni方法【
     if (int_register_android_os_BinderInternal(env) < 0)
         return -1;
+    // 注册BinderProxy类的jni方法
     if (int_register_android_os_BinderProxy(env) < 0)
         return -1;
 

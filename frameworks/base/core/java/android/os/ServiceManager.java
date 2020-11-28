@@ -37,7 +37,8 @@ public final class ServiceManager {
 
         // Find the service manager-->相当于 new ServiceManagerProxy(new BinderProxy);
         //TODO--2-->IServiceManager asInterface(IBinder obj)
-        sServiceManager = ServiceManagerNative.asInterface(BinderInternal.getContextObject());
+        //BinderInternal.getContextObject()-->[android_util_binder.cpp|android_os_BinderInternal_getContextObject]
+        sServiceManager = ServiceManagerNative.asInterface(BinderInternal.getContextObject());//ServiceManagerNative.asInterface(new BinderProxy())
         return sServiceManager;
     }
 

@@ -299,7 +299,7 @@ static void android_os_Parcel_writeStrongBinder(JNIEnv* env, jclass clazz, jlong
 {
     Parcel* parcel = reinterpret_cast<Parcel*>(nativePtr);//将java层 Parcel转换为 native层 Parcel
     if (parcel != NULL) {
-        //记住:writeStrongBinder的参数是-->JavaBBinder对象。
+        //记住:writeStrongBinder的参数是-->JavaBBinder对象。|-->[android_util_Binder.cpp ibinderForJavaObject]
         const status_t err = parcel->writeStrongBinder(ibinderForJavaObject(env, object));//ibinderForJavaObject和 writeStrongBinder
         if (err != NO_ERROR) {
             signalExceptionForError(env, clazz, err);

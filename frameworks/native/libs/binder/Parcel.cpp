@@ -201,7 +201,11 @@ inline static status_t finish_flatten_binder(
 {
     return out->writeObject(flat, false);// 将 flat_binder_object写入out
 }
-
+/**
+ * 将Binder对象扁平化，转换成flat_binder_object对象。
+ * 1|对于Binder实体，则cookie记录Binder实体的指针；
+ * 2|对于Binder代理，则用handle记录Binder代理的句柄；
+*/
 status_t flatten_binder(const sp<ProcessState>& /*proc*/,
     const sp<IBinder>& binder, Parcel* out)
 {
@@ -209,19 +213,19 @@ status_t flatten_binder(const sp<ProcessState>& /*proc*/,
 
     obj.flags = 0x7f | FLAT_BINDER_FLAG_ACCEPTS_FDS;
     if (binder != NULL) {
-        IBinder *local = binder->localBinder(); // 本地 Binder 不为空，返回的是 this ，--->MediaPlayerService 对象
+        IBinder *local = binder->localBinder(); // 本地 Binder 不为空，返回的是 this 
         if (!local) {
             BpBinder *proxy = binder->remoteBinder();
             if (proxy == NULL) {
                 ALOGE("null proxy");
             }
             const int32_t handle = proxy ? proxy->handle() : 0;
-            obj.type = BINDER_TYPE_HANDLE;
+            obj.type = BINDER_TYPE_HANDLE;  //远程Binder
             obj.binder = 0; /* Don't pass uninitialized stack data to a remote process */
             obj.handle = handle;
             obj.cookie = 0;
         } else {
-            // 进入该分支，type 是 BINDER_TYPE_BINDER 
+            // 进入该分支，type 是 BINDER_TYPE_BINDER 本地Binder
             obj.type = BINDER_TYPE_BINDER;//Binder对象扁平化，转换成 flat_binder_object对象
             obj.binder = reinterpret_cast<uintptr_t>(local->getWeakRefs());
             obj.cookie = reinterpret_cast<uintptr_t>(local);// cookie 传的是强引用也就是 --->MediaPlayerService/AMS 对象的地址
@@ -874,6 +878,7 @@ status_t Parcel::writeString16(const char16_t* str, size_t len)
 
 status_t Parcel::writeStrongBinder(const sp<IBinder>& val)
 {
+    //data.writeStrongBinder(service)最终等价于parcel->writeStrongBinder(new JavaBBinder(env, obj));
     return flatten_binder(ProcessState::self(), val, this);//记住:writeStrongBinder的参数->JavaBBinder对象。
 }
 

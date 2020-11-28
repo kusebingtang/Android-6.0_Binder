@@ -582,7 +582,7 @@ status_t IPCThreadState::transact(int32_t handle,
             ALOGI(">>>>>> CALLING transaction %d", code);
         }
         #endif
-        if (reply) {//TODO-->走这个分支
+        if (reply) {//TODO-->走这个分支[IPCThreadState::waitForResponse]
             err = waitForResponse(reply); //等待响应
         } else {
             Parcel fakeReply;
@@ -761,7 +761,7 @@ status_t IPCThreadState::waitForResponse(Parcel *reply, status_t *acquireResult)
 
                 if (reply) {
                     if ((tr.flags & TF_STATUS_CODE) == 0) {
-                        reply->ipcSetDataReference(
+                        reply->ipcSetDataReference( //当reply对象回收时，则会调用freeBuffer来回收内存
                             reinterpret_cast<const uint8_t*>(tr.data.ptr.buffer),
                             tr.data_size,
                             reinterpret_cast<const binder_size_t*>(tr.data.ptr.offsets),

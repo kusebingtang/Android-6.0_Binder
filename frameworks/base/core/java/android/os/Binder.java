@@ -499,7 +499,9 @@ final class BinderProxy implements IBinder {
     }
 
     public boolean transact(int code, Parcel data, Parcel reply, int flags) throws RemoteException {
+        //用于检测Parcel大小是否大于800k
         Binder.checkParcel(this, code, data, "Unreasonably large binder buffer");
+        //-->[android_os_BinderProxy_transact]
         return transactNative(code, data, reply, flags);//android_os_BinderProxy_transact-->frameworks/base/core/jni/android_util_Binder.cpp
     }
 

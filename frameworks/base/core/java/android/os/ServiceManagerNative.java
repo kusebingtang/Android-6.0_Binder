@@ -32,7 +32,7 @@ public abstract class ServiceManagerNative extends Binder implements IServiceMan
      */
     static public IServiceManager asInterface(IBinder obj)
     {
-        if (obj == null) {
+        if (obj == null) {  //obj为BpBinder
             return null;
         }
         IServiceManager in =
@@ -42,6 +42,7 @@ public abstract class ServiceManagerNative extends Binder implements IServiceMan
         }
         
         return new ServiceManagerProxy(obj);//-->ServiceManagerProxy
+        //ServiceManagerNative.asInterface(new BinderProxy()) 等价于 new ServiceManagerProxy(new BinderProxy())
     }
     
     public ServiceManagerNative()
@@ -109,6 +110,7 @@ public abstract class ServiceManagerNative extends Binder implements IServiceMan
 class ServiceManagerProxy implements IServiceManager {
     public ServiceManagerProxy(IBinder remote) {
         mRemote = remote;// mRemote为 BinderProxy对象,BinderProxy对象和native层对象BpBinder相互持有
+        //该BinderProxy对象对应于BpBinder(0)，其作为binder代理端，指向native层大管家service Manager。
     }
     
     public IBinder asBinder() {
@@ -145,6 +147,7 @@ class ServiceManagerProxy implements IServiceManager {
         Parcel reply = Parcel.obtain();
         data.writeInterfaceToken(IServiceManager.descriptor);
         data.writeString(name);
+        //-->[Parcel.java writeStrongBinder]| data.writeStrongBinder(service)最终等价于parcel->writeStrongBinder(new JavaBBinder(env, obj));
         data.writeStrongBinder(service);//分析AMS添加流程，此处service==AMS---将AMS 放入 data中
         data.writeInt(allowIsolated ? 1 : 0);
         mRemote.transact(ADD_SERVICE_TRANSACTION, data, reply, 0);//mRemote为 BinderProxy对象-->frameworks/base/core/java/android/os/Binder.java$BinderProxy.java
